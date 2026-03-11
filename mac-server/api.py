@@ -241,7 +241,7 @@ FORM_HTML = """
       if (failed === 0) {{
         // 全件成功 → GitHub PagesアプリにリダイレクトしてlocalStorageをクリアさせる
         setTimeout(() => {{
-          window.location.href = 'https://tatuyaokano.github.io/kakeibo/?cleared=1';
+          window.location.href = 'https://tattu-cat.github.io/kakeibo/?cleared=1';
         }}, 1500);
         msgEl.innerHTML = `<div class="msg ok">✅ オフライン記録 ${{success}}件を取り込みました！GitHubアプリに戻ります...</div>`;
       }} else {{

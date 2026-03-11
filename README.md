@@ -40,7 +40,7 @@ streamlit run app.py --server.headless true
 ## スマホ連携（オフライン対応）
 
 ### 外出中オフライン記録（推奨）
-1. **https://tatuyaokano.github.io/kakeibo/** をiPhoneのSafariで開く
+1. **https://tattu-cat.github.io/kakeibo/** をiPhoneのSafariで開く
 2. ホーム画面に追加するとオフラインでも動作（Service Workerによりキャッシュ）
 3. 外出中に「一時保存」で支出を記録
 4. 帰宅後、設定欄にMacのIPアドレスを入力 → 「一括送信」
