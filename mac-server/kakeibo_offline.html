@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="家計簿">
+  <title>支出登録（オフライン）</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, sans-serif; background: #f5f5f5; padding: 16px; padding-bottom: 40px; }
+    h1 { text-align: center; margin-bottom: 16px; font-size: 20px; color: #333; }
+    .card { background: white; border-radius: 16px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; }
+    h2 { font-size: 15px; color: #555; margin-bottom: 12px; }
+    label { display: block; font-size: 13px; color: #666; margin-bottom: 6px; margin-top: 14px; }
+    input, select { width: 100%; padding: 12px; font-size: 16px; border: 1px solid #ddd; border-radius: 10px; outline: none; background: white; }
+    input:focus, select:focus { border-color: #4ECDC4; }
+    .btn { margin-top: 16px; width: 100%; padding: 14px; font-size: 16px; font-weight: bold; border: none; border-radius: 12px; cursor: pointer; }
+    .btn-save { background: #4ECDC4; color: white; }
+    .btn-send { background: #FF6B6B; color: white; }
+    .btn-send:disabled { background: #ccc; cursor: default; }
+    .btn-settings { background: #f0f0f0; color: #555; margin-top: 8px; }
+    .msg { margin-top: 12px; padding: 12px; border-radius: 10px; text-align: center; font-size: 14px; }
+    .ok { background: #d4edda; color: #155724; }
+    .err { background: #f8d7da; color: #721c24; }
+    .badge { display: inline-block; background: #FF6B6B; color: white; border-radius: 12px; padding: 2px 8px; font-size: 13px; margin-left: 6px; }
+    .pending-list { margin-top: 8px; }
+    .pending-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+    .pending-item:last-child { border-bottom: none; }
+    .del-btn { background: none; border: none; color: #ccc; font-size: 18px; cursor: pointer; padding: 0 4px; margin-top: 0; width: auto; }
+    .empty { color: #aaa; font-size: 14px; text-align: center; padding: 12px 0; }
+    .ip-hint { font-size: 12px; color: #999; margin-top: 6px; }
+    .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+    .dot-online { background: #28a745; }
+    .dot-offline { background: #aaa; }
+  </style>
+</head>
+<body>
+  <h1>💰 支出登録</h1>
+
+  <!-- 入力フォーム -->
+  <div class="card">
+    <h2>支出を入力</h2>
+    <div id="form-msg"></div>
+    <label>日付</label>
+    <input type="date" id="f-date" required>
+    <label>カテゴリ</label>
+    <select id="f-category">
+      <option value="食費">食費</option>
+      <option value="交通費">交通費</option>
+      <option value="住居費">住居費</option>
+      <option value="光熱費">光熱費</option>
+      <option value="通信費">通信費</option>
+      <option value="医療費">医療費</option>
+      <option value="衣服・美容">衣服・美容</option>
+      <option value="娯楽・趣味">娯楽・趣味</option>
+      <option value="教育">教育</option>
+      <option value="その他">その他</option>
+    </select>
+    <label>金額（円）</label>
+    <input type="number" id="f-amount" min="1" placeholder="例: 500" inputmode="numeric">
+    <label>メモ（任意）</label>
+    <input type="text" id="f-memo" placeholder="例: コンビニ">
+    <button class="btn btn-save" onclick="saveLocal()">一時保存（オフライン可）</button>
+  </div>
+
+  <!-- 未送信リスト -->
+  <div class="card">
+    <h2>未送信リスト <span class="badge" id="pending-count">0</span></h2>
+    <div id="pending-list"></div>
+    <div id="send-msg"></div>
+    <button class="btn btn-send" id="send-btn" onclick="sendAll()" disabled>一括送信（帰宅後・WiFi接続時）</button>
+  </div>
+
+  <!-- 送信先設定（file://で開いた場合のみ表示） -->
+  <div class="card" id="ip-settings-card">
+    <h2>⚙️ 送信先設定（Mac のIPアドレス）</h2>
+    <div style="font-size:13px; color:#666; margin-bottom:8px;">
+      <span class="status-dot dot-offline" id="status-dot"></span>
+      <span id="status-text">未設定</span>
+    </div>
+    <label>Mac の IPアドレス</label>
+    <input type="text" id="mac-ip" placeholder="例: 192.168.1.10" inputmode="url">
+    <p class="ip-hint">家計簿を起動.command のコンソールに表示されるIPアドレスを入力して「保存」してください。</p>
+    <button class="btn btn-settings" onclick="saveIP()">保存</button>
+    <div id="ip-msg"></div>
+  </div>
+
+  <script>
+    const STORAGE_KEY = 'kakeibo_pending';
+    const IP_KEY = 'kakeibo_mac_ip';
+
+    // http:// で配信されているか file:// で開いているかを判定
+    const IS_SERVED = window.location.protocol !== 'file:';
+
+    // 今日の日付をセット
+    document.getElementById('f-date').value = new Date().toLocaleDateString('sv-SE');
+
+    // http:// 配信の場合はIP設定欄を非表示
+    if (IS_SERVED) {
+      document.getElementById('ip-settings-card').style.display = 'none';
+    } else {
+      const savedIP = localStorage.getItem(IP_KEY) || '';
+      document.getElementById('mac-ip').value = savedIP;
+      if (savedIP) {
+        document.getElementById('status-dot').className = 'status-dot dot-offline';
+        document.getElementById('status-text').textContent = `設定済み（${savedIP}）`;
+      }
+    }
+
+    function getPending() {
+      return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    }
+    function setPending(list) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+    }
+
+    function renderPending() {
+      const list = getPending();
+      const el = document.getElementById('pending-list');
+      const countEl = document.getElementById('pending-count');
+      const sendBtn = document.getElementById('send-btn');
+      countEl.textContent = list.length;
+      sendBtn.disabled = list.length === 0;
+      if (list.length === 0) {
+        el.innerHTML = '<div class="empty">未送信の支出はありません</div>';
+        return;
+      }
+      el.innerHTML = '<div class="pending-list">' + list.map((item, i) =>
+        `<div class="pending-item">
+          <span>${item.date} ${item.category}</span>
+          <span>¥${Number(item.amount).toLocaleString()}</span>
+          <button class="del-btn" onclick="deleteItem(${i})">✕</button>
+        </div>`
+      ).join('') + '</div>';
+    }
+
+    function saveLocal() {
+      const d = document.getElementById('f-date').value;
+      const c = document.getElementById('f-category').value;
+      const a = document.getElementById('f-amount').value;
+      const m = document.getElementById('f-memo').value;
+      const msgEl = document.getElementById('form-msg');
+
+      if (!d || !a || Number(a) <= 0) {
+        msgEl.innerHTML = '<div class="msg err">日付と金額を入力してください</div>';
+        return;
+      }
+      const list = getPending();
+      list.push({ date: d, category: c, amount: Number(a), memo: m });
+      setPending(list);
+
+      document.getElementById('f-amount').value = '';
+      document.getElementById('f-memo').value = '';
+      document.getElementById('f-date').value = new Date().toLocaleDateString('sv-SE');
+      msgEl.innerHTML = `<div class="msg ok">✅ 一時保存しました（${c} ¥${Number(a).toLocaleString()}）</div>`;
+      setTimeout(() => { msgEl.innerHTML = ''; }, 3000);
+      renderPending();
+    }
+
+    function deleteItem(i) {
+      const list = getPending();
+      list.splice(i, 1);
+      setPending(list);
+      renderPending();
+    }
+
+    function saveIP() {
+      const ip = document.getElementById('mac-ip').value.trim();
+      const msgEl = document.getElementById('ip-msg');
+      if (!ip) {
+        msgEl.innerHTML = '<div class="msg err">IPアドレスを入力してください</div>';
+        return;
+      }
+      localStorage.setItem(IP_KEY, ip);
+      document.getElementById('status-dot').className = 'status-dot dot-offline';
+      document.getElementById('status-text').textContent = `設定済み（${ip}）`;
+      msgEl.innerHTML = '<div class="msg ok">✅ 保存しました</div>';
+      setTimeout(() => { msgEl.innerHTML = ''; }, 2000);
+    }
+
+    async function sendAll() {
+      const list = getPending();
+      const msgEl = document.getElementById('send-msg');
+      const sendBtn = document.getElementById('send-btn');
+      if (list.length === 0) return;
+
+      if (IS_SERVED) {
+        // http:// で開いている場合 → 同一オリジンなので直接送信
+        sendBtn.disabled = true;
+        sendBtn.textContent = '送信中...';
+        msgEl.innerHTML = '<div class="msg" style="background:#fff3cd;color:#856404;">送信中...</div>';
+
+        let success = 0, failed = 0;
+        const failedItems = [];
+        for (const item of list) {
+          try {
+            const res = await fetch('/add', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(item),
+            });
+            if (res.ok) success++;
+            else { failed++; failedItems.push(item); }
+          } catch(e) {
+            failed++;
+            failedItems.push(item);
+          }
+        }
+
+        if (failed === 0) {
+          setPending([]);
+          msgEl.innerHTML = `<div class="msg ok">✅ ${success}件を送信しました！</div>`;
+        } else {
+          setPending(failedItems);
+          msgEl.innerHTML = `<div class="msg err">⚠️ ${success}件成功、${failed}件失敗。</div>`;
+        }
+        sendBtn.textContent = '一括送信（帰宅後・WiFi接続時）';
+        renderPending();
+
+      } else {
+        // file:// で開いている場合 → Macのページへリダイレクトして送信
+        const ip = localStorage.getItem(IP_KEY);
+        if (!ip) {
+          msgEl.innerHTML = '<div class="msg err">⚠️ 下の設定欄でIPアドレスを入力して「保存」してください</div>';
+          return;
+        }
+        const base = `http://${ip}:8000`;
+        const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(list))));
+        const url = `${base}/#import=${encoded}`;
+        msgEl.innerHTML = `
+          <div class="msg" style="background:#fff3cd;color:#856404;text-align:left;">
+            📡 Macに接続して送信します。<br>
+            <strong>Macで家計簿アプリが起動していることを確認してから下のボタンをタップしてください。</strong>
+          </div>
+          <a href="${url}" style="display:block;margin-top:10px;padding:14px;background:#28a745;color:white;text-align:center;border-radius:12px;font-weight:bold;font-size:16px;text-decoration:none;">
+            → Macに ${list.length}件を送信する
+          </a>
+        `;
+      }
+    }
+
+    renderPending();
+  </script>
+</body>
+</html>
